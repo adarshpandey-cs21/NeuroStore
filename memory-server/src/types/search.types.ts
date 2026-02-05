@@ -1,4 +1,5 @@
 import { Strand } from './engram.types';
+import { Chronicle } from './chronicle.types';
 
 export interface SearchQuery {
   ownerId: string;
@@ -8,6 +9,7 @@ export interface SearchQuery {
   strand?: Strand;
   tags?: string[];
   minSignal?: number;
+  minScore?: number;
   expandSynapses?: boolean;
 }
 
@@ -37,8 +39,14 @@ export interface SearchHit {
   trace: RetrievalTrace;
 }
 
+export interface ChronicleHit {
+  chronicle: Chronicle;
+  relevance: number;
+}
+
 export interface SearchResult {
   hits: SearchHit[];
+  chronicles: ChronicleHit[];
   total: number;
   query: string;
   took: number;

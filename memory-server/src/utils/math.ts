@@ -21,13 +21,13 @@ export function cosineSimilarity(a: number[], b: number[]): number {
 
 export function minMaxNormalize(values: number[]): number[] {
   if (values.length === 0) return [];
-  if (values.length === 1) return [1];
+  if (values.length === 1) return [values[0] > 0 ? 1 : 0];
 
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min;
 
-  if (range === 0) return values.map(() => 1);
+  if (range === 0) return values.map(() => 0);
 
   return values.map(v => (v - min) / range);
 }

@@ -62,8 +62,14 @@ export interface SearchHit {
   trace: RetrievalTrace;
 }
 
+export interface ChronicleHit {
+  chronicle: Chronicle;
+  relevance: number;
+}
+
 export interface SearchResult {
   hits: SearchHit[];
+  chronicles: ChronicleHit[];
   total: number;
   query: string;
   took: number;
@@ -77,6 +83,7 @@ export interface SearchQuery {
   strand?: Strand;
   tags?: string[];
   minSignal?: number;
+  minScore?: number;
   expandSynapses?: boolean;
 }
 

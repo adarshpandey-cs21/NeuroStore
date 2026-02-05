@@ -1,10 +1,12 @@
 import { DataStore } from '../types/db.types';
 import { EmbedderProvider } from '../types/provider.types';
-import { SearchQuery, SearchResult, SearchHit, RetrievalTrace } from '../types/search.types';
+import { SearchQuery, SearchResult, SearchHit, RetrievalTrace, ChronicleHit } from '../types/search.types';
 import { SynapseExpansion } from '../types/synapse.types';
+import { Chronicle } from '../types/chronicle.types';
 import { Engram, Strand } from '../types/engram.types';
 import { BM25Scorer } from './bm25';
 import { minMaxNormalize, clamp } from '../utils/math';
+import { tokenize } from '../utils/text';
 import { logger } from '../utils/logger';
 
 interface PipelineConfig {
@@ -20,8 +22,8 @@ interface PipelineConfig {
 }
 
 const DEFAULT_CONFIG: PipelineConfig = {
-  vectorWeight: 0.40,
-  keywordWeight: 0.20,
+  vectorWeight: 0.30,
+  keywordWeight: 0.30,
   recencyWeight: 0.10,
   signalWeight: 0.15,
   synapseWeight: 0.15,
@@ -60,26 +62,77 @@ export class RetrievalPipeline {
       query.strand
     );
 
-    if (vectorResults.length === 0) {
-      return { hits: [], total: 0, query: query.query, took: Date.now() - startTime };
+    // Step 3: Filter candidates below minimum vector similarity (user-configurable, default 0 = disabled)
+    const minScore = query.minScore ?? 0;
+    const filtered = minScore > 0
+      ? vectorResults.filter(vr => vr.score >= minScore)
+      : vectorResults;
+
+    // Step 4: Search chronicles in parallel
+    const chronicleHits = await this.searchChronicles(query.ownerId, query.query);
+
+    if (filtered.length === 0) {
+      // No vector matches — fall back to pure keyword search over all engrams
+      const allEngrams = await this.store.listEngrams(query.ownerId, { limit: candidateLimit });
+      const fallbackDocs = allEngrams.engrams.map(e => ({ id: e.id, content: e.content }));
+      const fallbackBm25 = this.bm25.score(query.query, fallbackDocs);
+      const keywordHits = fallbackBm25.filter(r => r.score > 0);
+
+      if (keywordHits.length === 0) {
+        return { hits: [], chronicles: chronicleHits, total: 0, query: query.query, took: Date.now() - startTime };
+      }
+
+      // Build hits from keyword-only matches
+      const engramMap = new Map(allEngrams.engrams.map(e => [e.id, e]));
+      const maxBm25 = Math.max(...keywordHits.map(h => h.score));
+      const keywordOnly: SearchHit[] = keywordHits
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit)
+        .map(kh => {
+          const engram = engramMap.get(kh.id)!;
+          const daysSinceAccess = (Date.now() - engram.lastAccessedAt.getTime()) / (1000 * 60 * 60 * 24);
+          const normalizedKw = maxBm25 > 0 ? kh.score / maxBm25 : 0;
+          const recencyBoost = this.config.recencyWeight *
+            Math.exp(-daysSinceAccess / this.config.recencyHalfLifeDays) *
+            clamp(1 - daysSinceAccess / this.config.recencyMaxDays, 0, 1);
+          const signalBoost = this.config.signalWeight * engram.signal;
+          const keywordComponent = this.config.keywordWeight * normalizedKw;
+          return {
+            engram: {
+              id: engram.id, ownerId: engram.ownerId, content: engram.content,
+              strand: engram.strand, tags: engram.tags, metadata: engram.metadata,
+              signal: engram.signal, accessCount: engram.accessCount,
+              createdAt: engram.createdAt, updatedAt: engram.updatedAt,
+              lastAccessedAt: engram.lastAccessedAt,
+            },
+            trace: {
+              vectorScore: 0, keywordScore: normalizedKw,
+              recencyBoost, signalBoost, synapseBoost: 0,
+              finalScore: keywordComponent + recencyBoost + signalBoost,
+            },
+          };
+        });
+
+      this.reinforceAccessed(keywordOnly.map(h => h.engram.id)).catch(() => {});
+      return { hits: keywordOnly, chronicles: chronicleHits, total: keywordOnly.length, query: query.query, took: Date.now() - startTime };
     }
 
-    // Step 3: BM25 keyword search over candidates
-    const bm25Docs = vectorResults.map(vr => ({ id: vr.engram.id, content: vr.engram.content }));
+    // Step 5: BM25 keyword search over candidates
+    const bm25Docs = filtered.map(vr => ({ id: vr.engram.id, content: vr.engram.content }));
     const bm25Results = this.bm25.score(query.query, bm25Docs);
     const bm25Map = new Map(bm25Results.map(r => [r.id, r.score]));
 
-    // Step 4: Normalize scores
-    const vectorScores = vectorResults.map(vr => vr.score);
-    const keywordScores = vectorResults.map(vr => bm25Map.get(vr.engram.id) || 0);
+    // Step 6: Normalize scores
+    const vectorScores = filtered.map(vr => vr.score);
+    const keywordScores = filtered.map(vr => bm25Map.get(vr.engram.id) || 0);
 
     const normalizedVector = minMaxNormalize(vectorScores);
     const normalizedKeyword = minMaxNormalize(keywordScores);
 
-    // Step 5 & 6: Synapse expansion
+    // Step 7: Synapse expansion
     const synapseBoosts = new Map<string, number>();
     if (query.expandSynapses !== false) {
-      const topSeeds = vectorResults.slice(0, Math.min(5, vectorResults.length));
+      const topSeeds = filtered.slice(0, Math.min(5, filtered.length));
       const expansions = await this.expandSynapses(topSeeds.map(s => s.engram.id));
       for (const exp of expansions) {
         const current = synapseBoosts.get(exp.engramId) || 0;
@@ -87,9 +140,9 @@ export class RetrievalPipeline {
       }
     }
 
-    // Step 7: Compute final scores
+    // Step 8: Compute final scores
     const now = Date.now();
-    const scored: { engram: Engram; trace: RetrievalTrace }[] = vectorResults.map((vr, idx) => {
+    const scored: { engram: Engram; trace: RetrievalTrace }[] = filtered.map((vr, idx) => {
       const daysSinceAccess = (now - vr.engram.lastAccessedAt.getTime()) / (1000 * 60 * 60 * 24);
 
       const vectorComponent = this.config.vectorWeight * normalizedVector[idx];
@@ -115,7 +168,7 @@ export class RetrievalPipeline {
       };
     });
 
-    // Step 8 & 9: Sort and trim
+    // Step 9: Sort and trim
     scored.sort((a, b) => b.trace.finalScore - a.trace.finalScore);
     const topHits = scored.slice(0, limit);
 
@@ -143,17 +196,57 @@ export class RetrievalPipeline {
 
     return {
       hits,
+      chronicles: chronicleHits,
       total: hits.length,
       query: query.query,
       took: Date.now() - startTime,
     };
   }
 
+  /**
+   * Match current chronicles against query tokens.
+   * Checks entity, attribute, and value fields for keyword overlap.
+   */
+  private async searchChronicles(ownerId: string, query: string): Promise<ChronicleHit[]> {
+    try {
+      const chronicles = await this.store.getCurrentChronicles(ownerId);
+      if (chronicles.length === 0) return [];
+
+      const queryTokens = tokenize(query);
+      if (queryTokens.length === 0) return [];
+
+      const scored: ChronicleHit[] = [];
+
+      for (const chronicle of chronicles) {
+        const fieldText = `${chronicle.entity} ${chronicle.attribute} ${chronicle.value}`;
+        const fieldTokens = tokenize(fieldText);
+
+        // Count how many query tokens match any field token
+        let matches = 0;
+        for (const qt of queryTokens) {
+          if (fieldTokens.some(ft => ft === qt)) {
+            matches++;
+          }
+        }
+
+        if (matches > 0) {
+          const relevance = matches / queryTokens.length;
+          scored.push({ chronicle, relevance });
+        }
+      }
+
+      scored.sort((a, b) => b.relevance - a.relevance);
+      return scored.slice(0, 5);
+    } catch (error) {
+      logger.warn('Chronicle search failed', { error: String(error) });
+      return [];
+    }
+  }
+
   private async expandSynapses(seedIds: string[]): Promise<SynapseExpansion[]> {
     const expansions: SynapseExpansion[] = [];
     const visited = new Set<string>(seedIds);
 
-    // BFS with depth limit
     let frontier = seedIds.map(id => ({ id, boost: 1.0, depth: 0, path: [id] }));
 
     while (frontier.length > 0) {

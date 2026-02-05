@@ -24,8 +24,8 @@ export const QueryChronicleSchema = z.object({
   at: z.string().datetime().optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
-  limit: z.number().int().min(1).max(100).optional().default(20),
-  offset: z.number().int().min(0).optional().default(0),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
+  offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
 export const CreateNexusSchema = z.object({

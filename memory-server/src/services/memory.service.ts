@@ -6,6 +6,7 @@ import { FactExtractionService } from './fact-extraction.service';
 import { DeduplicationService } from './deduplication.service';
 import { AssociationService } from './association.service';
 import { DecayService } from './decay.service';
+import { TemporalService } from './temporal.service';
 import { RetrievalPipeline } from '../retrieval/pipeline';
 import { logger } from '../utils/logger';
 
@@ -14,6 +15,7 @@ export class MemoryService {
   private deduplication: DeduplicationService;
   private association: AssociationService;
   private decay: DecayService;
+  private temporal: TemporalService;
   private retrieval: RetrievalPipeline;
 
   constructor(
@@ -25,14 +27,15 @@ export class MemoryService {
     this.deduplication = new DeduplicationService(store, embedder);
     this.association = new AssociationService(store);
     this.decay = new DecayService(store);
+    this.temporal = new TemporalService(store);
     this.retrieval = new RetrievalPipeline(store, embedder);
   }
 
   async addMemory(input: EngramCreateInput): Promise<Engram[]> {
     logger.info('Adding memory', { ownerId: input.ownerId, contentLength: input.content.length });
 
-    // Step 1: Extract facts and classify strand
-    const { facts, strand } = await this.factExtraction.extract(input.content);
+    // Step 1: Extract facts, classify strand, detect temporal facts
+    const { facts, strand, temporalFacts } = await this.factExtraction.extract(input.content);
     const effectiveStrand = input.strand || strand;
 
     const storedEngrams: Engram[] = [];
@@ -87,7 +90,25 @@ export class MemoryService {
       }
     }
 
-    logger.info('Memory stored', { count: storedEngrams.length });
+    // Step 6: Auto-record temporal facts as chronicles
+    if (temporalFacts.length > 0) {
+      for (const tf of temporalFacts) {
+        try {
+          await this.temporal.recordFact({
+            ownerId: input.ownerId,
+            entity: tf.entity,
+            attribute: tf.attribute,
+            value: tf.value,
+          });
+          logger.debug('Auto-recorded chronicle', { entity: tf.entity, attribute: tf.attribute, value: tf.value });
+        } catch (error) {
+          // Don't fail the whole addMemory if chronicle recording fails
+          logger.warn('Failed to auto-record chronicle', { error: String(error), entity: tf.entity });
+        }
+      }
+    }
+
+    logger.info('Memory stored', { count: storedEngrams.length, chronicles: temporalFacts.length });
     return storedEngrams;
   }
 

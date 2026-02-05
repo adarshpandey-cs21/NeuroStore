@@ -33,6 +33,7 @@ export interface DataStore {
   deleteChronicle(id: string): Promise<boolean>;
   queryChronicles(query: ChronicleQuery): Promise<{ chronicles: Chronicle[]; total: number }>;
   getCurrentFact(ownerId: string, entity: string, attribute: string): Promise<Chronicle | null>;
+  getCurrentChronicles(ownerId: string): Promise<Chronicle[]>;
   getTimeline(ownerId: string, entity: string): Promise<Chronicle[]>;
 
   // Nexuses

@@ -491,6 +491,18 @@ export class PostgresStore implements DataStore {
     return result.rows[0] ? this.rowToChronicle(result.rows[0]) : null;
   }
 
+  async getCurrentChronicles(ownerId: string): Promise<Chronicle[]> {
+    const result = await this.pool.query(
+      `SELECT * FROM chronicles
+       WHERE owner_id = $1
+         AND effective_from <= NOW()
+         AND (effective_until IS NULL OR effective_until > NOW())
+       ORDER BY effective_from DESC`,
+      [ownerId]
+    );
+    return result.rows.map((r: any) => this.rowToChronicle(r));
+  }
+
   async getTimeline(ownerId: string, entity: string): Promise<Chronicle[]> {
     const result = await this.pool.query(
       `SELECT * FROM chronicles WHERE owner_id = $1 AND entity = $2 ORDER BY effective_from ASC`,

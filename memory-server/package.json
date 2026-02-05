@@ -6,7 +6,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "ts-node src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "ts-node --project tests/tsconfig.json tests/api.test.ts && ts-node --project tests/tsconfig.json tests/temporal.test.ts && ts-node --project tests/tsconfig.json tests/sdk.test.ts",
+    "test:api": "ts-node --project tests/tsconfig.json tests/api.test.ts",
+    "test:temporal": "ts-node --project tests/tsconfig.json tests/temporal.test.ts",
+    "test:sdk": "ts-node --project tests/tsconfig.json tests/sdk.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

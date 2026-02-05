@@ -425,6 +425,18 @@ export class SqliteStore implements DataStore {
     return row ? this.rowToChronicle(row) : null;
   }
 
+  async getCurrentChronicles(ownerId: string): Promise<Chronicle[]> {
+    const now = this.toEpoch(new Date());
+    const rows = this.db.prepare(
+      `SELECT * FROM chronicles
+       WHERE owner_id = ?
+         AND effective_from <= ?
+         AND (effective_until IS NULL OR effective_until > ?)
+       ORDER BY effective_from DESC`
+    ).all(ownerId, now, now) as any[];
+    return rows.map(r => this.rowToChronicle(r));
+  }
+
   async getTimeline(ownerId: string, entity: string): Promise<Chronicle[]> {
     const rows = this.db.prepare(
       'SELECT * FROM chronicles WHERE owner_id = ? AND entity = ? ORDER BY effective_from ASC'

@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { MemoryService } from '../../services/memory.service';
+import { Engram } from '../../types/engram.types';
 import { createApiError } from '../middleware/error-handler';
+
+/** Strip embedding vector from API responses — it's internal data, not useful to clients. */
+function withoutEmbedding(engram: Engram): Omit<Engram, 'embedding'> {
+  const { embedding, ...rest } = engram;
+  return rest;
+}
 
 export class EngramController {
   constructor(private memoryService: MemoryService) {}
@@ -8,7 +15,7 @@ export class EngramController {
   create = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const engrams = await this.memoryService.addMemory(req.body);
-      res.status(201).json({ engrams });
+      res.status(201).json({ engrams: engrams.map(withoutEmbedding) });
     } catch (error) {
       next(error);
     }
@@ -25,7 +32,7 @@ export class EngramController {
           strand: strand as any,
         }
       );
-      res.json(result);
+      res.json({ ...result, engrams: result.engrams.map(withoutEmbedding) });
     } catch (error) {
       next(error);
     }
@@ -37,7 +44,7 @@ export class EngramController {
       if (!engram) {
         return next(createApiError(404, 'Engram not found'));
       }
-      res.json({ engram });
+      res.json({ engram: withoutEmbedding(engram) });
     } catch (error) {
       next(error);
     }
@@ -49,7 +56,7 @@ export class EngramController {
       if (!engram) {
         return next(createApiError(404, 'Engram not found'));
       }
-      res.json({ engram });
+      res.json({ engram: withoutEmbedding(engram) });
     } catch (error) {
       next(error);
     }
@@ -83,7 +90,7 @@ export class EngramController {
       if (!engram) {
         return next(createApiError(404, 'Engram not found'));
       }
-      res.json({ engram });
+      res.json({ engram: withoutEmbedding(engram) });
     } catch (error) {
       next(error);
     }

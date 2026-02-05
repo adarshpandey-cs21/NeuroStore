@@ -3,7 +3,7 @@ import { logger } from '../utils/logger';
 
 /**
  * Native completion provider — zero external dependencies.
- * Returns content as-is (no fact extraction, no strand classification).
+ * Returns content as-is (no fact extraction, no strand classification, no temporal detection).
  * Suitable for local dev and testing without an LLM key.
  */
 export class NativeCompletion implements CompletionProvider {
@@ -16,10 +16,10 @@ export class NativeCompletion implements CompletionProvider {
   }
 
   async completeJson<T>(_systemPrompt: string, userPrompt: string): Promise<T> {
-    // Return a default fact-extraction-shaped response
     return {
       facts: [userPrompt],
       strand: 'general',
+      temporalFacts: [],
     } as T;
   }
 }

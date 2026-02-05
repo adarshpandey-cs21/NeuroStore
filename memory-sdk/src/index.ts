@@ -8,6 +8,7 @@ export type {
   SearchResult,
   SearchHit,
   RetrievalTrace,
+  ChronicleHit,
   Chronicle,
   ChronicleCreateInput,
   ChronicleUpdateInput,
